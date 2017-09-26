@@ -1,6 +1,6 @@
 ---
 title: "STAT/MATH 495: Problem Set 03"
-author: "WRITE YOUR NAME HERE"
+author: "Vickie Ip"
 date: "2017-09-26"
 output:
   html_document:
@@ -16,10 +16,11 @@ knitr::opts_chunk$set(echo = TRUE, fig.width=8, fig.height=4.5)
 
 # Load packages
 library(tidyverse)
+library(dplyr)
+library(broom)
 data1 <- read_csv("data/data1.csv")
 data2 <- read_csv("data/data2.csv")
 ```
-
 
 # Question
 
@@ -27,18 +28,159 @@ For both `data1` and `data2` tibbles (a tibble is a data frame with some
 [metadata](https://blog.rstudio.com/2016/03/24/tibble-1-0-0#tibbles-vs-data-frames) attached):
 
 * Find the splines model with the best out-of-sample predictive ability.
-* Create a visualizaztion arguing why you chose this particular model.
-* Create a visualizaztion of this model plotted over the given $(x_i, y_i)$ points for $i=1,\ldots,n=3000$.
+* Create a visualization arguing why you chose this particular model.
+* Create a visualization of this model plotted over the given $(x_i, y_i)$ points for $i=1,\ldots,n=3000$.
 * Give your estimate $\widehat{\sigma}$ of $\sigma$ where the noise component $\epsilon_i$ is distributed with mean 0 and standard deviation $\sigma$.
 
+# `spline_it` function and `main` function
 
-# Data 1
+To start off, I created a `spline_it` function that takes in a training set and testing set and outputs a RMSE value. 
 
-```{r, echo=TRUE, warning=FALSE, message=FALSE}
+```{r}
+spline_it <- function (train_data, test_data, df) {
+  #Create model using training_data
+  modelT <- smooth.spline(train_data$y ~ train_data$x, df=df) 
+  modelT_df <- modelT %>%
+  broom::augment()
+  
+  #Evaluate model using testing_data
+  predictT <- predict(modelT, test_data$x) %>%  as.tibble() 
+  y_hat <- predictT %>%  pull(y)
+  new_test_data <- test_data %>% mutate(y_hat)
+  
+  #Generate RMSE value
+  MSE = mean((new_test_data$y - new_test_data$y_hat)^2) 
+  RMSE = sqrt(MSE)
+  return(RMSE)
+  
+}
 ```
 
-# Data 2
 
-```{r, echo=TRUE, warning=FALSE, message=FALSE}
+Next, I created a function that takes in a dataset and creates 5 folds for cross-validation. The function then goes on to generate an average RMSE value for each fold using the `spline_it` function above. The last part of the function creates an average RMSE value out of the 5 folds through using a specified degrees of freedom.
+
+```{r}
+#Create 5 folds
+  main <- function(dataset,df) {
+  dataset[sample(1:nrow(dataset)),]
+  Fold1_train <- dataset[0:2400,] 
+  Fold1_test <- dataset[2401:3000,]
+  
+  Fold2_train <- dataset[c(0:1800,2401:3000),] 
+  Fold2_test <- dataset[1801:2400,] 
+  
+  Fold3_train <- dataset[c(0:1200,1801:3000),]
+  Fold3_test <- dataset[1201:1800,]
+
+  Fold4_train <- dataset[c(0:600,1201:3000),] 
+  Fold4_test <- dataset[601:1200,] 
+  
+  Fold5_train <- dataset[601:3000,]
+  Fold5_test <- dataset[0:600,]
+  
+#Generate 5 RMSE values
+  F1 <- spline_it(Fold1_train, Fold1_test, df)
+  F2 <- spline_it(Fold2_train, Fold2_test, df)
+  F3 <- spline_it(Fold3_train, Fold3_test, df)
+  F4 <- spline_it(Fold4_train, Fold4_test, df)
+  F5 <- spline_it(Fold5_train, Fold5_test, df)
+#Average out the RMSE values  
+  Avg_RMSE = ((F1 + F2 + F3 + F4 + F5)/5)
+  return(Avg_RMSE)
+  }
+
 ```
+
+
+# Dataset 1
+
+For `data1`, in order to figure out the out-of-sample model with the best predictive ability, I had to determine the degrees of freedom of the model that generates the lowest RMSE value. Therefore, I decided to run the `main` and `spline_it` function over a range of degrees of freedom and recorded the RMSE values in a dataframe named `rmse.scores1`.
+
+For Dataset 1:
+```{r, warning= FALSE}
+rmse.scores1 = data.frame(matrix(vector(), 0, 2,
+                dimnames=list(c(), c("Degrees of Freedom", "RMSE"))),
+                stringsAsFactors=F) 
+
+for (i in 2:100) {
+  rmse.scores1[i,1] <- i
+  rmse.scores1[i,2] <- main(data1,i)
+  i = i + 1
+}
+rmse.scores1[32:36,] #34 df has RMSE of 15.05571
+```
+
+Based on `rmse.scores1`, 34 degrees of freedom generates the best out-of-sample predictive abilities. 
+
+The following graph is a visualization of the RMSE values for a range of degrees of freedom. The model with the best out-of-sample predictive ability would be the the lowest point on the curve, which in this case is when the degrees of freedom is 34.
+
+```{r}
+ggplot(rmse.scores1, aes(x=Degrees.of.Freedom)) + 
+  geom_point(aes(y=RMSE), col="red")
+```
+
+To check whether 34 degrees of freedom is appropriate for this dataset, I plotted the model over the whole of `data1` and produced the following visualization:
+
+```{r}
+final_model1 <- smooth.spline(x=data1$x, y=data1$y, df = 34)
+final_model1_tidy <- final_model1 %>% 
+  broom::augment() 
+
+plot <- ggplot(final_model1_tidy, aes(x=x)) +
+  geom_point(aes(y=y)) +
+  geom_line(aes(y=.fitted), col="red",size=1)
+plot
+
+final_model1_tidy$y <- as.numeric(final_model1_tidy$y)
+final_model1_tidy$.fitted <- as.numeric(final_model1_tidy$.fitted)
+MSE = mean((final_model1_tidy$y - final_model1_tidy$.fitted)^2, na.rm=TRUE)
+RMSE = sqrt(MSE)
+RMSE
+```
+
+Given that the RMSE value, otherwise known as the predicted sigma, for this model is 14.87, the plot shows that most of the data lies rouhgly within 2 standard deviations and therefore the model is appropriate.
+
+# Dataset 2
+
+Similarly, I ran the same functions for `data2`:
+
+```{r}
+rmse.scores2 = data.frame(matrix(vector(), 0, 2,
+                dimnames=list(c(), c("Degrees of Freedom", "RMSE"))),
+                stringsAsFactors=F)  #Created a dataframe to store the RMSE values for a range of degrees of freedom
+
+set.seed(85)
+for (i in 2:100) {
+  rmse.scores2[i,1] <- i
+  rmse.scores2[i,2] <- main(data2,i)
+  i = i + 1
+}
+rmse.scores2[25:29,] #27 df
+```
+
+According to `rmse.scores2`, the best degrees of freedom to use is 27 because it has the lowest RMSE value of 24.95. Again, if we look at the following visualization, we can see that the lowest point of the curve lies near when the degrees of freedom is around 27.
+
+```{r}
+ggplot(rmse.scores2, aes(x=Degrees.of.Freedom)) + 
+  geom_point(aes(y=RMSE), col="blue")
+```
+
+
+```{r}
+final_model2 <- smooth.spline(x=data2$x, y=data2$y, df = 27)
+final_model2_tidy <- final_model2 %>% 
+  broom::augment() 
+
+plot2 <- ggplot(final_model2_tidy, aes(x=x)) +
+  geom_point(aes(y=y)) +
+  geom_line(aes(y=.fitted), col="blue",size=1)
+plot2
+
+final_model2_tidy$y <- as.numeric(final_model2_tidy$y)
+final_model2_tidy$.fitted <- as.numeric(final_model2_tidy$.fitted)
+MSE = mean((final_model2_tidy$y - final_model2_tidy$.fitted)^2, na.rm=TRUE)
+RMSE = sqrt(MSE); RMSE
+```
+
+This visualization shows the model fitted over the whole of `data2` and we can see that the curve follows the general pattern of the dataset and  most of the observations in this dataset lies within two standard deviations from the mean. In this case, the standard deviation or predicted sigma is 24.77.
 
